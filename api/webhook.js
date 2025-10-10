@@ -29,8 +29,35 @@ async function fetchSheetRows(){
   }
   return csvParse(txt);
 }
-function findRowByDate(rows, ds){
-  for (const row of rows.slice(2)) if ((row[0]||"").trim()===ds) return row;
+function normDate(s) {
+  if (s == null) return null;
+  let t = String(s).trim();
+
+  // убираем кавычки и "г." в конце
+  t = t.replace(/^["']|["']$/g, "").replace(/\s*г\.?$/i, "");
+
+  // приводим / к .
+  t = t.replace(/\//g, ".");
+
+  const m = t.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/);
+  if (!m) return null;
+
+  let [, dd, mm, yy] = m;
+  dd = dd.padStart(2, "0");
+  mm = mm.padStart(2, "0");
+  if (yy.length === 2) yy = "20" + yy;
+
+  return `${dd}.${mm}.${yy}`;
+}
+function findRowByDate(rows, targetDS) {
+  const target = normDate(targetDS);
+  if (!target) return null;
+
+  for (const row of rows.slice(2)) {           // со строки 3 — данные
+    const raw = row[0];
+    const ds  = normDate(raw);
+    if (ds && ds === target) return row;
+  }
   return null;
 }
 function makeByRole(rows, row){
