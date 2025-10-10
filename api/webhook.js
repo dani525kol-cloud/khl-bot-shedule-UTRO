@@ -1,4 +1,4 @@
-// Отключаем bodyParser — сами читаем сырое тело
+// Не парсим тело автоматически — читаем сами
 module.exports.config = { api: { bodyParser: false } };
 
 /* =============== НАСТРОЙКИ =============== */
@@ -13,33 +13,28 @@ const SHEET_URL =
   `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(SHEET_NAME)}`;
 
 /* ---------- Роли/рендер ---------- */
-// Варианты заголовков из таблицы (в любом регистре/с пробелами)
+// варианты заголовков (в любом регистре)
 const ROLE_ALIASES = {
   "оператор":    "operator",
   "операторы":   "operator",
-
   "ведущий":     "host",
   "ведущие":     "host",
-
   "монтаж":      "editor_video",
   "монтажёр":    "editor_video",
   "монтажеры":   "editor_video",
-
   "сценарий":    "writer",
   "сценаристы":  "writer",
-
   "редактор":    "editor_text",
-  "редакторы":   "editor_text",
+  "редакторы":   "editor_text"
 };
 
-// порядок вывода и подписи с эмодзи
 const RENDER_ORDER = ["operator", "host", "editor_video", "writer", "editor_text"];
 const ROLE_LABEL = {
   operator:     "🎥 Оператор",
   host:         "🎙 Ведущий",
   editor_video: "✂️ Монтажёр",
   writer:       "📝 Сценарий",
-  editor_text:  "💻 Редактор",
+  editor_text:  "💻 Редактор"
 };
 
 function menu() {
@@ -58,21 +53,20 @@ function todayStr() {
   }).format(new Date()).replace(/\//g, ".");
 }
 
+// CSV-парсер с поддержкой простых кавычек
 function csvParse(text) {
-  // простой CSV: разделитель — запятая; кавычки Google тоже понимаем
   return text
     .trim()
     .split(/\r?\n/)
     .map(line => {
-      // грубая, но рабочая разбивка: учитываем простые "..."
       const out = [];
       let cur = "", inQ = false;
       for (let i = 0; i < line.length; i++) {
         const ch = line[i];
-        if (ch === '"' ) {
-          if (inQ && line[i+1] === '"') { cur += '"'; i++; }
-          else inQ = !inQ;
-        } else if (ch === ',' && !inQ) {
+        if (ch === '"') {
+          if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+          else { inQ = !inQ; }
+        } else if (ch === "," && !inQ) {
           out.push(cur.trim());
           cur = "";
         } else {
@@ -84,7 +78,7 @@ function csvParse(text) {
     });
 }
 
-// Нормализация дат к dd.MM.yyyy
+// Норм дата -> dd.MM.yyyy
 function normDate(s) {
   if (s == null) return null;
   let t = String(s).trim();
@@ -98,18 +92,17 @@ function normDate(s) {
   return `${dd}.${mm}.${yy}`;
 }
 
-// Жёсткая нормализация заголовка: убираем неразрывные пробелы/скрытые символы
+// Нормализуем заголовки (убираем нестандартные пробелы/мусор)
 function normHeader(s) {
   if (s == null) return "";
   return String(s)
-    .replace(/[\u00A0\u2000-\u200B\u202F\uFEFF]/g, " ") // экзотические пробелы
-    .replace(/[^\p{L}\p{N}\s._-]/gu, "")               // мусор
+    .replace(/[\u00A0\u2000-\u200B\u202F\uFEFF]/g, " ")
+    .replace(/[^\p{L}\p{N}\s._-]/gu, "")
     .toLowerCase()
     .trim()
     .replace(/\s+/g, " ");
 }
 
-// Нормализованная карта алиасов
 const ROLE_ALIASES_NORM = Object.fromEntries(
   Object.entries(ROLE_ALIASES).map(([k, v]) => [normHeader(k), v])
 );
@@ -128,7 +121,7 @@ async function fetchSheetRows() {
 function findRowByDate(rows, targetDS) {
   const target = normDate(targetDS);
   if (!target) return null;
-  for (const row of rows.slice(2)) { // данные начиная со строки 3
+  for (const row of rows.slice(2)) {
     const ds = normDate(row[0]);
     if (ds && ds === target) return row;
   }
@@ -142,9 +135,8 @@ function makeByRoleFixed(rows, row) {
     const keyNorm = normHeader(header[i] || "");
     const roleKey = ROLE_ALIASES_NORM[keyNorm];
     if (!roleKey) continue;
-
     const val = (row[i] == null ? "" : String(row[i]).trim());
-    if (!val || val === "-") continue;     // "-" скрываем; "х" показываем как есть
+    if (!val || val === "-") continue; // "-" скрываем; "х" показываем
     (out[roleKey] ||= []).push(val);
   }
   return out;
@@ -212,18 +204,19 @@ async function answerToday(chatId) {
     const rows = await fetchSheetRows();
     const ds   = todayStr();
     const row  = findRowByDate(rows, ds);
-
     if (!row) {
-      return sendMessage(chatId, `Нет записей на ${ds}`, menu());
+      await sendMessage(chatId, `Нет записей на ${ds}`, menu());
+      return;
     }
     const txt = `📅 Сегодня (${ds}) по графику:\n` + formatFixed(makeByRoleFixed(rows, row));
-    return sendMessage(chatId, txt, menu());
+    await sendMessage(chatId, txt, menu());
   } catch (e) {
     if (String(e.message) === "SHEETS_ACCESS") {
-      return sendMessage(chatId,
+      await sendMessage(chatId,
         "Не могу прочитать таблицу. Дай доступ: «Любой, у кого есть ссылка — Просмотр».",
         menu()
       );
+      return;
     }
     console.error("answerToday error:", e);
   }
@@ -238,27 +231,27 @@ async function answer3Days(chatId) {
       const ds = new Intl.DateTimeFormat("ru-RU", {
         day: "2-digit", month: "2-digit", year: "numeric", timeZone: TZ
       }).format(d).replace(/\//g, ".");
-
       const row = findRowByDate(rows, ds);
-      parts.push(
-        row
-          ? `📅 ${ds} по графику:\n${formatFixed(makeByRoleFixed(rows, row))}`
-          : `📅 ${ds} по графику:\n—`
-      );
+      if (row) {
+        parts.push(`📅 ${ds} по графику:\n${formatFixed(makeByRoleFixed(rows, row))}`);
+      } else {
+        parts.push(`📅 ${ds} по графику:\n—`);
+      }
     }
-    return sendMessage(chatId, parts.join("\n\n"), menu());
+    await sendMessage(chatId, parts.join("\n\n"), menu());
   } catch (e) {
     if (String(e.message) === "SHEETS_ACCESS") {
-      return sendMessage(chatId,
+      await sendMessage(chatId,
         "Не могу прочитать таблицу. Дай доступ: «Любой, у кого есть ссылка — Просмотр».",
         menu()
       );
+      return;
     }
     console.error("answer3Days error:", e);
   }
 }
 
-/* ---------- Handler (важно: сначала работа, потом res.send) ---------- */
+/* ---------- Handler ---------- */
 module.exports = async (req, res) => {
   let body = {};
   try {
@@ -274,7 +267,7 @@ module.exports = async (req, res) => {
       const chatId = cq?.message?.chat?.id;
       if (chatId) {
         if (cq.data === "today")  await answerToday(chatId);
-        if (cq.data === "3days")  await answer3Days(chatId);
+        else if (cq.data === "3days")  await answer3Days(chatId);
       }
     } else if (body.message) {
       const msg = body.message;
@@ -282,17 +275,18 @@ module.exports = async (req, res) => {
       const text = (msg.text || "").trim();
       console.log("update_type=message", text);
 
-      if (/^\/start/i.test(text))                               await sendMessage(chatId, "Выбери:", menu());
-      else if (/^(\/график|график|сегодня|\/today)$/i.test(text)) await answerToday(chatId);
-      else if (/^(3\s*дня|три\s*дня|\/three)$/i.test(text))       await answer3Days(chatId);
+      if (/^\/start/i.test(text)) {
+        await sendMessage(chatId, "Выбери:", menu());
+      } else if (/^(\/график|график|сегодня|\/today)$/i.test(text)) {
+        await answerToday(chatId);
+      } else if (/^(3\s*дня|три\s*дня|\/three)$/i.test(text)) {
+        await answer3Days(chatId);
+      }
     }
   } catch (e) {
     console.error("Webhook error:", e);
   }
 
-  // Ответ только ПОСЛЕ всей работы, иначе Vercel может “усыпить” процесс
-  res.status(200).send("ok");
-};
-  // Ответ только ПОСЛЕ всей работы, иначе Vercel может “усыпить” процесс
+  // Ответ только ПОСЛЕ работы
   res.status(200).send("ok");
 };
