@@ -68,7 +68,7 @@ function formatByRole(byRole) {
   return lines.join("\n");
 }
 
-async function sendMessage(chatId, text, replyMarkup) {
+async function sendMessage(chatId, text, replyMarkup){
   const payload = {
     chat_id: chatId,
     text: text || " ",
@@ -77,18 +77,31 @@ async function sendMessage(chatId, text, replyMarkup) {
   };
   if (replyMarkup) payload.reply_markup = replyMarkup;
 
-  const resp = await fetch(`${TG_API}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+  const url = `${TG_API}/sendMessage`;
+  const body = JSON.stringify(payload);
+  const headers = { "Content-Type": "application/json" };
 
-  const body = await resp.text();
-  if (!resp.ok) {
-    console.error("TG sendMessage error:", resp.status, body);
-  } else {
-    console.log("TG sendMessage ok:", body.slice(0, 160));
+  let lastErr;
+  for (const delay of [0, 400, 1200]) { // 3 попытки: сразу, через 0.4с и 1.2с
+    if (delay) await new Promise(r => setTimeout(r, delay));
+    try {
+      const resp = await fetch(url, { method:"POST", headers, body });
+      const txt = await resp.text();
+      if (!resp.ok) {
+        console.error("TG sendMessage error:", resp.status, txt.slice(0,180));
+        lastErr = new Error(`TG ${resp.status}`);
+        continue;
+      }
+      console.log("TG sendMessage ok:", txt.slice(0,160));
+      return;
+    } catch (e) {
+      console.error("TG sendMessage fetch fail:", e?.message || e);
+      lastErr = e;
+      continue;
+    }
   }
+  // окончательно не удалось — просто залогируем
+  console.error("TG sendMessage failed after retries:", lastErr?.message || lastErr);
 }
 
 async function answerCallbackQuery(id) {
@@ -200,7 +213,7 @@ module.exports = async (req, res) => {
     if (body.callback_query) {
       const cq = body.callback_query;
       console.log("update_type=callback_query", cq.data);
-      await answerCallbackQuery(cq.id);
+      answerCallbackQuery(cq.id).catch(()=>{});
       const chatId = cq?.message?.chat?.id;
       if (!chatId) return;
       if (cq.data === "today") return answerToday(chatId);
