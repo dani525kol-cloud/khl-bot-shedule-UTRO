@@ -11,6 +11,35 @@ const TG_API    = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 const SHEET_URL =
   `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(SHEET_NAME)}`;
 
+// ===== Роли (названия из таблицы -> внутренние ключи) =====
+const ROLE_ALIASES = {
+  "оператор": "operator",
+  "операторы": "operator",
+
+  "ведущий": "host",
+  "ведущие": "host",
+
+  "монтаж": "editor_video",
+  "монтажёр": "editor_video",
+  "монтажеры": "editor_video",
+
+  "сценарий": "writer",
+  "сценаристы": "writer",
+
+  "редактор": "editor_text",
+  "редакторы": "editor_text",
+};
+
+// порядок и подписи с эмодзи
+const RENDER_ORDER = ["operator", "host", "editor_video", "writer", "editor_text"];
+const ROLE_LABEL = {
+  operator:     "🎥 Оператор",
+  host:         "🎙 Ведущий",
+  editor_video: "✂️ Монтажёр",
+  writer:       "📝 Сценарий",
+  editor_text:  "💻 Редактор",
+};
+
 /* ---------- utils ---------- */
 function todayStr() {
   return new Intl.DateTimeFormat("ru-RU", {
@@ -18,6 +47,34 @@ function todayStr() {
   }).format(new Date()).replace(/\//g,".");
 }
 function csvParse(t){ return t.trim().split(/\r?\n/).map(r=>r.split(",").map(c=>c.trim())); }
+
+// Собираем людей по фиксированным ключам ролей
+function makeByRoleFixed(rows, row) {
+  const header = rows[1];
+  const out = {};
+  for (let i = 1; i < header.length; i++) {
+    const roleRaw = (header[i] || "").toString().trim().toLowerCase();
+    const key = ROLE_ALIASES[roleRaw];
+    if (!key) continue;
+
+    const val = (row[i] == null ? "" : row[i].toString()).trim();
+    if (!val || val === "-") continue; // "-" скрываем; "х" оставляем как есть
+    (out[key] ||= []).push(val);
+  }
+  return out;
+}
+
+// Рендер в нужном порядке, с эмодзи и "—" если пусто
+function formatFixed(byRole) {
+  const lines = [];
+  for (const key of RENDER_ORDER) {
+    const label = ROLE_LABEL[key] || key;
+    const arr = byRole[key] || [];
+    const uniq = [...new Set(arr.map(s => s.replace(/\s+/g, " ").trim()))].filter(Boolean);
+    lines.push(`${label}: ${uniq.length ? uniq.join(", ") : "—"}`);
+  }
+  return lines.join("\n");
+}
 
 async function fetchSheetRows(){
   const r = await fetch(SHEET_URL);
@@ -129,7 +186,7 @@ async function answerToday(chatId){
     const ds   = todayStr();
     const row  = findRowByDate(rows, ds);
     if (!row) return sendMessage(chatId, `Нет записей на ${ds}`, menu());
-    const text = `📅 Сегодня (${ds}) по графику:\n` + formatByRole(makeByRole(rows,row));
+    const text = `📅 Сегодня (${ds}) по графику:\n` + formatFixed(makeByRoleFixed(rows, row));
     return sendMessage(chatId, text, menu());
   }catch(e){
     if (String(e.message)==="SHEETS_ACCESS"){
@@ -147,7 +204,7 @@ async function answer3Days(chatId){
       const ds=new Intl.DateTimeFormat("ru-RU",{day:"2-digit",month:"2-digit",year:"numeric",timeZone:TZ})
         .format(d).replace(/\//g,".");
       const row=findRowByDate(rows, ds);
-      parts.push(row ? `📅 ${ds} по графику:\n${formatByRole(makeByRole(rows,row))}` : `📅 ${ds} по графику:\n—`);
+      parts.push(row ? `📅 ${ds} по графику:\n${formatFixed(makeByRoleFixed(rows,row))}` : `📅 ${ds} по графику:\n—`);
     }
     return sendMessage(chatId, parts.join("\n\n"), menu());
   }catch(e){
