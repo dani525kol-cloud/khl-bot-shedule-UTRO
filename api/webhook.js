@@ -11,23 +11,40 @@ const TG_API    = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 const SHEET_URL =
   `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(SHEET_NAME)}`;
 
-// ===== Роли (названия из таблицы -> внутренние ключи) =====
+// Варианты заголовков из таблицы (в любом регистре/с пробелами)
 const ROLE_ALIASES = {
-  // из твоей таблицы (строка 2):
   "оператор":    "operator",
-  "ведущие":     "host",
-  "монтаж":      "editor_video",
-  "сценаристы":  "writer",
-  "редакторы":   "editor_text",
+  "операторы":   "operator",
 
-  // на всякий случай — синонимы/варианты:
   "ведущий":     "host",
-  "редактор":    "editor_text",
-  "сценарий":    "writer",
+  "ведущие":     "host",
+
+  "монтаж":      "editor_video",
   "монтажёр":    "editor_video",
   "монтажеры":   "editor_video",
-  "операторы":   "operator"
+
+  "сценарий":    "writer",
+  "сценаристы":  "writer",
+
+  "редактор":    "editor_text",
+  "редакторы":   "editor_text",
 };
+
+// Жёсткая нормализация заголовка: убираем неразрывные/невидимые, схлопываем пробелы
+function normHeader(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/[\u00A0\u2000-\u200B\u202F\uFEFF]/g, " ") // нестандартные пробелы → обычный
+    .replace(/[^\p{L}\p{N}\s._-]/gu, "")               // выкидываем «мусор» (оставляем буквы/цифры/._-)
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");                             // схлопываем все пробелы
+}
+
+// Делаем нормализованную карту алиасов один раз
+const ROLE_ALIASES_NORM = Object.fromEntries(
+  Object.entries(ROLE_ALIASES).map(([k, v]) => [normHeader(k), v])
+);
 
 // порядок и подписи с эмодзи
 const RENDER_ORDER = ["operator", "host", "editor_video", "writer", "editor_text"];
@@ -49,18 +66,29 @@ function csvParse(t){ return t.trim().split(/\r?\n/).map(r=>r.split(",").map(c=>
 
 // Собираем людей по фиксированным ключам ролей
 function makeByRoleFixed(rows, row) {
-  const header = rows[1];
+  const header = rows[1];          // строка с названиями ролей (HEADER_ROW = 2)
   const out = {};
   for (let i = 1; i < header.length; i++) {
-    const roleRaw = (header[i] || "").toString().trim().toLowerCase();
-    const key = ROLE_ALIASES[roleRaw];
-    if (!key) continue;
+    const keyNorm = normHeader(header[i] || "");
+    const roleKey = ROLE_ALIASES_NORM[keyNorm];
+    if (!roleKey) continue;
 
-    const val = (row[i] == null ? "" : row[i].toString()).trim();
-    if (!val || val === "-") continue; // "-" скрываем; "х" оставляем как есть
-    (out[key] ||= []).push(val);
+    const val = (row[i] == null ? "" : String(row[i]).trim());
+    if (!val || val === "-") continue; // "-" скрываем; "х" показываем
+    (out[roleKey] ||= []).push(val);
   }
   return out;
+}
+
+function formatFixed(byRole) {
+  const lines = [];
+  for (const key of RENDER_ORDER) {
+    const label = ROLE_LABEL[key] || key;
+    const arr = byRole[key] || [];
+    const uniq = [...new Set(arr.map(s => s.replace(/\s+/g, " ").trim()))].filter(Boolean);
+    lines.push(`${label}: ${uniq.length ? uniq.join(", ") : "—"}`);
+  }
+  return lines.join("\n");
 }
 
 // Рендер в нужном порядке, с эмодзи и "—" если пусто
@@ -203,8 +231,11 @@ async function answer3Days(chatId){
       const ds=new Intl.DateTimeFormat("ru-RU",{day:"2-digit",month:"2-digit",year:"numeric",timeZone:TZ})
         .format(d).replace(/\//g,".");
       const row=findRowByDate(rows, ds);
-      parts.push(row ? `📅 ${ds} по графику:\n${formatFixed(makeByRoleFixed(rows,row))}` : `📅 ${ds} по графику:\n—`);
-    }
+      parts.push(
+  row
+    ? `📅 ${ds} по графику:\n${formatFixed(makeByRoleFixed(rows, row))}`
+    : `📅 ${ds} по графику:\n—`
+);
     return sendMessage(chatId, parts.join("\n\n"), menu());
   }catch(e){
     if (String(e.message)==="SHEETS_ACCESS"){
