@@ -10,30 +10,24 @@ const TG_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 const SHEET_URL =
   `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(SHEET_NAME)}`;
 
-// === утилиты ===
+// --- utils ---
 function todayStr() {
   return new Intl.DateTimeFormat("ru-RU", { day:"2-digit", month:"2-digit", year:"numeric", timeZone:TZ })
-    .format(new Date()).replace(/\//g, ".");
+    .format(new Date()).replace(/\//g,".");
 }
-function csvParse(text) {
-  return text.trim().split(/\r?\n/).map(r => r.split(",").map(c => c.trim()));
-}
+function csvParse(text) { return text.trim().split(/\r?\n/).map(r => r.split(",").map(c => c.trim())); }
 async function fetchSheetRows() {
   const r = await fetch(SHEET_URL);
   if (!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
   return csvParse(await r.text());
 }
-function findRowByDate(rows, ds) {
-  for (const row of rows.slice(2)) if ((row[0]||"").trim() === ds) return row;
-  return null;
-}
+function findRowByDate(rows, ds) { for (const row of rows.slice(2)) if ((row[0]||"").trim()===ds) return row; return null; }
 function makeByRole(rows, row) {
-  const header = rows[1];
-  const byRole = {};
+  const header = rows[1], byRole = {};
   for (let i=1;i<header.length;i++){
     const role = header[i] || `Колонка ${i+1}`;
     const val = (row[i]||"").trim();
-    if (!val || val === "-") continue; // "-" скрываем, "х" оставляем
+    if (!val || val === "-") continue; // "х" оставляем, "-" скрываем
     (byRole[role] ||= []).push(val);
   }
   return byRole;
@@ -80,27 +74,32 @@ async function answer3Days(chatId){
   return sendMessage(chatId, parts.join("\n\n"), menu());
 }
 async function readRawBody(req){
-  if (req.body) return req.body;
+  if (req.body) return req.body;               // вдруг уже распарсили
   const chunks=[]; for await (const ch of req) chunks.push(ch);
   const raw = Buffer.concat(chunks).toString();
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
-// === handler ===
+// --- handler ---
 module.exports = async (req, res) => {
-  res.status(200).send("ok"); // отвечаем Телеге мгновенно
+  let body = {};
+  try {
+    body = await readRawBody(req);             // 1) СНАЧАЛА читаем тело
+  } catch (e) {
+    console.error("read body error", e);
+  }
 
-  try{
-    const body = await readRawBody(req);
+  res.status(200).send("ok");                  // 2) только потом быстро отвечаем
 
-    if (body.callback_query){
+  try {
+    if (body.callback_query) {
       const cq = body.callback_query;
+      console.log("update_type=callback_query", cq.data);
       await answerCallbackQuery(cq.id);
       const chatId = cq?.message?.chat?.id;
-      const data = cq?.data;
       if (!chatId) return;
-      if (data === "today") return answerToday(chatId);
-      if (data === "3days") return answer3Days(chatId);
+      if (cq.data === "today") return answerToday(chatId);
+      if (cq.data === "3days") return answer3Days(chatId);
       return;
     }
 
@@ -108,9 +107,12 @@ module.exports = async (req, res) => {
     if (!msg) return;
     const chatId = msg.chat.id;
     const text = (msg.text||"").trim();
+    console.log("update_type=message", text);
 
     if (/^\/start/i.test(text))                       return sendMessage(chatId, "Выбери:", menu());
     if (/^(\/график|график|сегодня|\/today)$/i.test(text)) return answerToday(chatId);
     if (/^(3\s*дня|три\s*дня|\/three)$/i.test(text))       return answer3Days(chatId);
-  }catch(e){ console.error("Webhook error:", e); }
+  } catch (e) {
+    console.error("Webhook error:", e);
+  }
 };
