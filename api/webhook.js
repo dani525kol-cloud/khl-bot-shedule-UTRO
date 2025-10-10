@@ -133,6 +133,7 @@ async function answer3Days(chatId){
 
 /* --- чтение тела --- */
 async function readRawBody(req){
+  if (req.method === "GET") return { ping:true }; // чтобы /api/webhook в браузере отвечал
   if (req.body) return req.body;
   const chunks=[]; for await (const ch of req) chunks.push(ch);
   const raw=Buffer.concat(chunks).toString();
@@ -140,33 +141,34 @@ async function readRawBody(req){
 }
 
 /* --- handler --- */
+// ВАЖНО: сначала выполняем всю работу, потом шлём 200 OK.
 module.exports = async (req,res)=>{
   let body={};
   try { body = await readRawBody(req); } catch(e){ console.error("read body error", e); }
-  res.status(200).send("ok"); // отвечаем мгновенно
 
   try{
     if (body.callback_query){
       const cq = body.callback_query;
       console.log("update_type=callback_query", cq.data);
       const chatId = cq?.message?.chat?.id;
-      if (!chatId) return;
-      // НЕ вызываем answerCallbackQuery — в некоторых регионах часто таймаутит
-      if (cq.data === "today") return answerToday(chatId);
-      if (cq.data === "3days") return answer3Days(chatId);
-      return;
+      if (chatId){
+        if (cq.data === "today") await answerToday(chatId);
+        else if (cq.data === "3days") await answer3Days(chatId);
+      }
+    } else if (body.message){
+      const msg = body.message;
+      const chatId = msg.chat.id;
+      const text   = (msg.text||"").trim();
+      console.log("update_type=message", text);
+
+      if (/^\/start/i.test(text))                         await sendMessage(chatId, "Выбери:", menu());
+      else if (/^(\/график|график|сегодня|\/today)$/i.test(text)) await answerToday(chatId);
+      else if (/^(3\s*дня|три\s*дня|\/three)$/i.test(text))       await answer3Days(chatId);
     }
-
-    const msg = body.message;
-    if (!msg) return;
-    const chatId = msg.chat.id;
-    const text   = (msg.text||"").trim();
-    console.log("update_type=message", text);
-
-    if (/^\/start/i.test(text))                         return sendMessage(chatId, "Выбери:", menu());
-    if (/^(\/график|график|сегодня|\/today)$/i.test(text)) return answerToday(chatId);
-    if (/^(3\s*дня|три\s*дня|\/three)$/i.test(text))       return answer3Days(chatId);
   }catch(e){
     console.error("Webhook error:", e);
   }
+
+  // Отвечаем после обработки
+  res.status(200).send("ok");
 };
