@@ -129,12 +129,21 @@ function findRowByDate(rows, targetDS) {
 }
 
 function makeByRoleFixed(rows, row) {
-  const header = rows[1];
+  const names = rows[0] || [];
+  const header = rows[1] || [];
   const out = {};
-  for (let i = 1; i < header.length; i++) {
+  let roleKey = null;
+  for (let i = 0; i < Math.max(names.length, header.length, row.length); i++) {
+    const name = normHeader(names[i] || "");
     const keyNorm = normHeader(header[i] || "");
-    const roleKey = ROLE_ALIASES_NORM[keyNorm];
-    if (!roleKey) continue;
+    // Объединённая роль продолжается на все столбцы сотрудников группы.
+    // Отдельная дата или неизвестный заголовок завершает предыдущую группу.
+    if (name === "дата" || keyNorm === "дата" || normDate(header[i])) {
+      roleKey = null;
+      continue;
+    }
+    if (keyNorm) roleKey = ROLE_ALIASES_NORM[keyNorm] || null;
+    if (!roleKey || !name) continue;
     const val = (row[i] == null ? "" : String(row[i]).trim());
     if (!val || val === "-") continue; // "-" скрываем; "х" показываем
     (out[roleKey] ||= []).push(val);
